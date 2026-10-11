@@ -1216,6 +1216,9 @@
     <ClCompile Include="Debugger\WebSocket\ReplaySubscriber.cpp">
       <Filter>Debugger\WebSocket</Filter>
     </ClCompile>
+    <ClCompile Include="Debugger\WebSocket\SaveStateSubscriber.cpp">
+      <Filter>Debugger\WebSocket</Filter>
+    </ClCompile>
     <ClCompile Include="ControlMapper.cpp">
       <Filter>Core</Filter>
     </ClCompile>
@@ -2194,6 +2197,9 @@
       <Filter>Ext\libzip</Filter>
     </ClInclude>
     <ClInclude Include="Debugger\WebSocket\ReplaySubscriber.h">
+      <Filter>Debugger\WebSocket</Filter>
+    </ClInclude>
+    <ClInclude Include="Debugger\WebSocket\SaveStateSubscriber.h">
       <Filter>Debugger\WebSocket</Filter>
     </ClInclude>
     <ClInclude Include="ControlMapper.h">

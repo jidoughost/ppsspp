@@ -44,7 +44,7 @@ static u32 backlightOffTime;
 static u32 imposeChanges;
 static u32 imposeAvls;
 
-void __ImposeInit() {
+void __ImposeRefreshSystemParams() {
 	language = GetPSPLanguage();
 	if (PSP_CoreParameter().compat.flags().EnglishOrJapaneseOnly) {
 		if (language != PSP_SYSTEMPARAM_LANGUAGE_ENGLISH && language != PSP_SYSTEMPARAM_LANGUAGE_JAPANESE) {
@@ -52,6 +52,10 @@ void __ImposeInit() {
 		}
 	}
 	buttonValue = PSP_CoreParameter().compat.flags().ForceCircleButtonConfirm ? PSP_SYSTEMPARAM_BUTTON_CIRCLE : g_Config.iButtonPreference;
+}
+
+void __ImposeInit() {
+	__ImposeRefreshSystemParams();
 	umdPopup = PSP_UMD_POPUP_DISABLE;
 	backlightOffTime = 0;
 	imposeChanges = 0;

@@ -22,4 +22,6 @@ class PointerWrap;
 void Register_sceImpose();
 void Register_sceImpose_driver();
 void __ImposeInit();
+// Re-reads the language and confirm button from g_Config, for a change made while a game runs.
+void __ImposeRefreshSystemParams();
 void __ImposeDoState(PointerWrap &p);

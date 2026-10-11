@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <string>
+
 namespace http {
 class ServerRequest;
 }
@@ -34,6 +36,8 @@ struct BreakpointHit;
 inline void WebSocketDebuggerTick() {}
 inline bool WebSocketDebuggerHasClients() { return false; }
 inline void WebSocketNotifyBreakpointHit(const BreakpointHit &hit) {}
+inline void WebSocketNotifyEvent(const char *category, const std::string &json) {}
+inline void WebSocketFlushEvents(int timeoutMs) {}
 
 #else
 
@@ -51,5 +55,14 @@ bool WebSocketDebuggerHasClients();
 // stopped the CPU. That's what makes log-only breakpoints usable for automation: previously their
 // only trace was a log line. CPU thread only.
 void WebSocketNotifyBreakpointHit(const BreakpointHit &hit);
+
+// Hands an already formatted event to every connected debugger, under a broadcast category a client
+// can turn off with broadcast.config.set ("savedata", "exit", ...; the category must be one seeded in
+// HandleDebuggerRequest). Any thread. Check WebSocketDebuggerHasClients() first to skip formatting.
+void WebSocketNotifyEvent(const char *category, const std::string &json);
+
+// Waits up to timeoutMs for every connection to have sent what was queued for it, so an event
+// pushed just before shutdown (the exit event) gets out. Returns at once with nobody connected.
+void WebSocketFlushEvents(int timeoutMs);
 
 #endif
