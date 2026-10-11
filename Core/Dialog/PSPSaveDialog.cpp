@@ -40,6 +40,12 @@
 #include "Core/Config.h"
 #include "Core/Reporting.h"
 #include "Core/SaveState.h"
+#include "Core/MIPS/MIPS.h"
+#include "Core/CoreTiming.h"
+#include "Common/Data/Format/JSONWriter.h"
+#include "Core/Debugger/WebSocket.h"
+
+using json::JsonWriter;
 
 static double g_lastSaveTime = -1.0;
 
@@ -110,6 +116,90 @@ PSPSaveDialog::~PSPSaveDialog() {
 	if (ioThread.joinable()) {
 		ioThread.join();
 	}
+}
+
+static bool IsValidUTF8(std::string_view s) {
+	size_t i = 0;
+	while (i < s.size()) {
+		const u8 c = (u8)s[i];
+		int extra = c < 0x80 ? 0 : (c >> 5) == 0x6 ? 1 : (c >> 4) == 0xE ? 2 : (c >> 3) == 0x1E ? 3 : -1;
+		if (extra < 0)
+			return false;
+		for (int k = 1; k <= extra; ++k) {
+			if (i + k >= s.size() || ((u8)s[i + k] >> 6) != 0x2)
+				return false;
+		}
+		i += extra + 1;
+	}
+	return true;
+}
+
+// Game text in these fields is whatever encoding the game used (often Shift-JIS), which isn't valid
+// in JSON; such a field is sent as hex under <name>Hex instead.
+static void WriteGameString(JsonWriter &j, const char *name, std::string_view s) {
+	if (IsValidUTF8(s)) {
+		j.writeString(name, std::string(s));
+	} else {
+		std::string hex;
+		for (u8 c : s)
+			hex += StringFromFormat("%02x", c);
+		j.writeString(std::string(name) + "Hex", hex);
+	}
+}
+
+static void WriteFileData(JsonWriter &j, const char *name, const PspUtilitySavedataFileData &f) {
+	j.pushDict(name);
+	j.writeUint("buf", f.buf.ptr);
+	j.writeUint("bufSize", f.bufSize);
+	j.writeUint("size", f.size);
+	j.pop();
+}
+
+// Savedata utility started (savedata.start) / finished (savedata.finish)
+//
+// Broadcast (category "savedata") when the game calls sceUtilitySavedataInitStart, and again when it
+// shuts the request down (sceUtilitySavedataShutdownStart), which is after the work is done and the
+// result is in. Lets a client see which titles save, when, under what names, and where the data
+// sits in PSP memory, without per-title digging.
+//  - requestAddr: PSP address of the game's SceUtilitySavedataParam.
+//  - mode, modeName: the request type (0 AUTOLOAD, 1 AUTOSAVE, 2 LOAD, 3 SAVE, ... see SavedataParam.h).
+//  - gameName, saveName, fileName: as the game passed them (or <name>Hex when not UTF-8).
+//  - saveDir: the save directory chosen (finish only; for list modes, the one the player picked).
+//  - dataBuf, dataBufSize, dataSize: the data file's buffer in PSP memory, its capacity, and the
+//    size to write / that was read (finish: after the operation).
+//  - icon0, icon1, pic1, snd0: {buf, bufSize, size} of each optional file.
+//  - sfoTitle, sfoSavedataTitle, sfoDetail: the PARAM.SFO strings the game supplied.
+//  - initResult (start): what InitStart returned. result (finish): common.result, 0 on success.
+//  - ticks: CPU cycles into emulation.
+static void NotifySavedata(const char *event, u32 requestAddr, const SceUtilitySavedataParam *p, int result, const std::string &saveDir) {
+	if (!WebSocketDebuggerHasClients() || !p)
+		return;
+	const u32 mode = (u32)p->mode;
+	JsonWriter j;
+	j.begin();
+	j.writeString("event", event);
+	j.writeUint("requestAddr", requestAddr);
+	j.writeUint("mode", mode);
+	j.writeString("modeName", mode < ARRAY_SIZE(utilitySavedataTypeNames) ? utilitySavedataTypeNames[mode] : "UNKNOWN");
+	WriteGameString(j, "gameName", StringViewFromFixedSizeField(p->gameName));
+	WriteGameString(j, "saveName", StringViewFromFixedSizeField(p->saveName));
+	WriteGameString(j, "fileName", StringViewFromFixedSizeField(p->fileName));
+	if (!saveDir.empty())
+		WriteGameString(j, "saveDir", saveDir);
+	j.writeUint("dataBuf", p->dataBuf.ptr);
+	j.writeUint("dataBufSize", p->dataBufSize);
+	j.writeUint("dataSize", p->dataSize);
+	WriteFileData(j, "icon0", p->icon0FileData);
+	WriteFileData(j, "icon1", p->icon1FileData);
+	WriteFileData(j, "pic1", p->pic1FileData);
+	WriteFileData(j, "snd0", p->snd0FileData);
+	WriteGameString(j, "sfoTitle", StringViewFromFixedSizeField(p->sfoParam.title));
+	WriteGameString(j, "sfoSavedataTitle", StringViewFromFixedSizeField(p->sfoParam.savedataTitle));
+	WriteGameString(j, "sfoDetail", StringViewFromFixedSizeField(p->sfoParam.detail));
+	j.writeInt(strcmp(event, "savedata.start") == 0 ? "initResult" : "result", result);
+	j.writeFloat("ticks", (double)CoreTiming::GetTicks(currentMIPS));
+	j.end();
+	WebSocketNotifyEvent("savedata", j.str());
 }
 
 int PSPSaveDialog::Init(int paramAddr) {
@@ -343,6 +433,7 @@ int PSPSaveDialog::Init(int paramAddr) {
 	INFO_LOG(Log::sceUtility,"snd0 data : %08x",*((unsigned int*)&param.GetPspParam()->snd0FileData.buf));
 	INFO_LOG(Log::sceUtility,"snd0 size : %u",param.GetPspParam()->snd0FileData.bufSize);*/
 	INFO_LOG(Log::sceUtility, "Return value: %d", retval);
+	NotifySavedata("savedata.start", requestAddr, param.GetPspParam(), retval, "");
 	return retval;
 }
 
@@ -1362,6 +1453,9 @@ int PSPSaveDialog::Shutdown(bool force) {
 		ioThread.join();
 	}
 	ioThreadStatus = SAVEIO_NONE;
+
+	if (param.GetPspParam())
+		NotifySavedata("savedata.finish", requestAddr, param.GetPspParam(), param.GetPspParam()->common.result, GetSelectedSaveDirName());
 
 	PSPDialog::Shutdown(force);
 	if (!force) {
