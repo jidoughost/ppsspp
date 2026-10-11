@@ -58,7 +58,18 @@ bool MemArena::GrabMemSpace(size_t size) {
 	// Try a few times in case multiple instances are started near each other.
 	char ram_temp_filename[128]{};
 	bool is_shm = false;
-	for (int i = 0; i < 256; ++i) {
+#if defined(__linux__) && defined(MFD_CLOEXEC)
+	// Prefer an anonymous memfd: it is backed like shm but not limited by the size of the /dev/shm
+	// mount. Containers get a 64 MB /dev/shm by default, smaller than the arena of a game that asks
+	// for PSP-2000 memory, and touching a page past what that tmpfs can hold raises SIGBUS (e.g. when a
+	// save state copies all of RAM).
+	fd = memfd_create("ppsspp_ram", MFD_CLOEXEC);
+	if (fd >= 0) {
+		INFO_LOG(Log::MemMap, "Got memfd for the memory arena");
+		is_shm = true;
+	}
+#endif
+	for (int i = 0; i < 256 && fd < 0; ++i) {
 		snprintf(ram_temp_filename, sizeof(ram_temp_filename), "/ppsspp_%d.ram", i);
 		// This opens atomically, so will fail if another process is starting.
 		fd = shm_open(ram_temp_filename, O_RDWR | O_CREAT | O_EXCL, mode);
