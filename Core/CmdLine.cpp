@@ -202,6 +202,7 @@ static const CommandLineParam g_autoParams[] = {
 	{POFF(compare), CmdParamType::Bool, "compare", 'c', "Enable comparison mode", CmdLineMode::Headless},
 	{POFF(bench), CmdParamType::Bool, "bench", 'b', "Enable benchmark mode", CmdLineMode::Headless},
 	{POFF(oldAtrac), CmdParamType::Bool, "old-atrac", '\0', "Use old ATRAC decoder"},
+	{POFF(ignoreBadMem), CmdParamType::Bool, "ignore-bad-mem", '\0', "Ignore invalid memory accesses, as the desktop app does by default (headless otherwise stops the run on the first one)", CmdLineMode::Headless},
 	{POFF(log), CmdParamType::String, "log", '\0', "Output log to FILE", CmdLineMode::Application},
 	{POFF(enableLogging), CmdParamType::Bool, "log", '\0', "Full log output, not just emulated printfs", CmdLineMode::Headless},
 	{POFF(screenshotFilename), CmdParamType::String, "screenshot", '\0', "Compare rendered output against a reference screenshot FILE", CmdLineMode::Headless},
@@ -593,6 +594,11 @@ void CommandLineOptions::ApplyToConfig() const {
 	if (oldAtrac.has_value()) {
 		g_Config.bUseOldAtrac = oldAtrac.value();
 		g_Config.DoNotSaveSetting(&g_Config.bUseOldAtrac);
+	}
+
+	if (ignoreBadMem.has_value()) {
+		g_Config.bIgnoreBadMemAccess = ignoreBadMem.value();
+		g_Config.DoNotSaveSetting(&g_Config.bIgnoreBadMemAccess);
 	}
 
 	if (root.has_value()) {

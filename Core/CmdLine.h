@@ -159,6 +159,8 @@ struct CommandLineOptions {
 	bool optionS = false;   // a legacy option
 
 	std::optional<bool> oldAtrac;
+	// Desktop default for bad memory accesses (ignore them); headless forces them fatal for the tests.
+	std::optional<bool> ignoreBadMem;
 
 	// Headless options that may also be mildly useful in application mode
 	std::optional<int> resolutionScale;
