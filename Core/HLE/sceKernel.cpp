@@ -345,6 +345,7 @@ std::string __KernelStateSummary() {
 void sceKernelExitGame() {
 	INFO_LOG(Log::sceKernel, "sceKernelExitGame");
 	__KernelSwitchOffThread("game exited");
+	Core_SetStopReason("game.exit");
 	Core_Stop();
 
 	g_OSD.Show(OSDType::MESSAGE_INFO, "sceKernelExitGame()", 0.0f, "kernelexit");
@@ -355,6 +356,7 @@ void sceKernelExitGameWithStatus()
 {
 	INFO_LOG(Log::sceKernel, "sceKernelExitGameWithStatus");
 	__KernelSwitchOffThread("game exited");
+	Core_SetStopReason("game.exitWithStatus");
 	Core_Stop();
 
 	g_OSD.Show(OSDType::MESSAGE_INFO, "sceKernelExitGameWithStatus()");
@@ -1030,6 +1032,7 @@ static int sceKernelExitVSH(u32 paramPtr) {
 
 	INFO_LOG(Log::sceKernel, "sceKernelExitVSH");
 	__KernelSwitchOffThread("VSH exited");
+	Core_SetStopReason("vsh.exit");
 	Core_Stop();
 
 	g_OSD.Show(OSDType::MESSAGE_INFO, "sceKernelExitVSH()", 0.0f, "kernelexit");
