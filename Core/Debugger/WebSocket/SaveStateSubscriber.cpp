@@ -288,6 +288,8 @@ static void WriteSystemConfig(JsonWriter &json) {
 	json.writeInt("dateFormat", g_Config.iDateFormat);
 	json.writeInt("timeFormat", g_Config.iTimeFormat);
 	json.writeBool("daylightSavings", g_Config.bDayLightSavings);
+	// read only: the JIT compiles the check in, so it is set at launch (--ignore-bad-mem)
+	json.writeBool("ignoreBadMemAccess", g_Config.bIgnoreBadMemAccess);
 }
 
 // Read the system settings (config.get)
@@ -303,6 +305,7 @@ static void WriteSystemConfig(JsonWriter &json) {
 //  - dateFormat: 0 YYYYMMDD, 1 MMDDYYYY, 2 DDMMYYYY.
 //  - timeFormat: 0 24-hour, 1 12-hour.
 //  - daylightSavings: boolean.
+//  - ignoreBadMemAccess: boolean, read only (set at launch with --ignore-bad-mem).
 // For the emulated date and time itself, see replay.time.get/set.
 void WebSocketSystemConfigGet(DebuggerRequest &req) {
 	JsonWriter &json = req.Respond();
