@@ -17,6 +17,7 @@
 
 #include "Common/StringUtils.h"
 #include "Core/Core.h"
+#include "Core/HW/Display.h"
 #include "Core/System.h"
 #include "Core/CoreTiming.h"
 #include "Core/Debugger/Breakpoints.h"
@@ -68,15 +69,19 @@ static DebugInterface *CPUFromRequest(DebuggerRequest &req) {
 //
 // No immediate response (only a "deferred" event, if the client asked for those via
 // client.config.set).  Once CPU is stepping, a "cpu.stepping" event will be sent.
+//
+// A request is never lost: it used to be dropped whenever it arrived while the core was between
+// frames or running a display list (Core_Break() only acts on a running CPU), which a client that
+// resumes and pauses in quick succession hits constantly. It now stays pending until the CPU can
+// stop - see Core_RequestBreak().
 void WebSocketCPUStepping(DebuggerRequest &req) {
 	if (!currentDebugMIPS->isAlive()) {
 		return req.Fail("CPU not started");
 	}
-	if (!Core_IsStepping() && Core_IsActive()) {
-		// Core_Break() is explicitly free-threaded (see Core.cpp), so no need to bounce this to the CPU
-		// thread - and we can't anyway, since queuing to it only makes sense once the CPU actually *is*
-		// stepping, which this call is what triggers in the first place.
-		Core_Break(BreakReason::DebugStep, 0);
+	if (!Core_IsStepping()) {
+		// Free-threaded (see Core.cpp), so no need to bounce this to the CPU thread - and we can't
+		// anyway, since queuing to it only makes sense once the CPU actually *is* stepping.
+		Core_RequestBreak(BreakReason::DebugStep);
 	}
 }
 
@@ -119,6 +124,7 @@ void WebSocketCPUResume(DebuggerRequest &req) {
 //    ticks-per-second ratio isn't fixed over a run. This is what to use to answer "how far into
 //    the game am I", e.g. to line up input injection with a wall-clock repro.
 //  - clockHz: the CPU clock frequency right now, for reference.
+//  - vblanks: vblanks since boot (sceDisplayGetVcount), the frame counter cpu.runFrames counts in.
 // Deliberately not routed through Core_RunOnCPUThread(): this is meant to be a cheap, frequently-pollable
 // status check, and the "pc" field is already documented as inaccurate unless stepping - queuing it would
 // add up to a frame of latency to every poll for no real accuracy benefit. Matches how SteppingBroadcaster
@@ -136,6 +142,7 @@ void WebSocketCPUStatus(DebuggerRequest &req) {
 	json.writeFloat("ticks", pspInited ? CoreTiming::GetTicks(currentMIPS) : 0);
 	json.writeFloat("us", pspInited ? (double)CoreTiming::PeekGlobalTimeUs() : 0);
 	json.writeUint("clockHz", pspInited ? CoreTiming::GetClockFrequencyHz() : 0);
+	json.writeInt("vblanks", pspInited ? __DisplayGetVCount() : 0);
 }
 
 // Retrieve all regs and their values (cpu.getAllRegs)

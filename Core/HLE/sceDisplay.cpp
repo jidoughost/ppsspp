@@ -596,6 +596,9 @@ void hleEnterVblank(u64 userdata, int cyclesLate) {
 		// Gotta flip even if sceDisplaySetFramebuf was not called.
 		__DisplayFlip(cyclesLate);
 	}
+
+	// Last, so a cpu.runFrames stop sees this vblank's flip on the display.
+	Core_NotifyVblank();
 }
 
 static void NotifyUserIfSlow() {

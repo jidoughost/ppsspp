@@ -34,6 +34,12 @@ void Core_SetGraphicsContext(GraphicsContext *ctx);
 // Returns false when an UI exit state is detected.
 void Core_Stop();
 
+// Why the core was last stopped, for a host that wants to say why a run ended (headless prints it).
+// A short dotted name ("game.exit", "timeout.wall", ...) set by whoever calls Core_Stop() with a
+// reason worth reporting; empty when nobody said. Cleared when a game boots.
+void Core_SetStopReason(const char *reason);
+std::string Core_GetStopReason();
+
 // X11, sigh.
 #ifdef None
 #undef None
@@ -75,6 +81,7 @@ enum class BreakReason {
 	UIPause,
 	HLEDebugBreak,
 	RunUntilTime,
+	RunFrames,
 };
 const char *BreakReasonToString(BreakReason reason);
 
@@ -120,6 +127,18 @@ void Core_Break(BreakReason reason, u32 relatedAddress = 0, const BreakpointHit 
 
 // Resumes execution. Works both when stepping the CPU and the GE.
 void Core_Resume();
+
+// Free-threaded. A break that is never lost: Core_Break() only takes effect in CORE_RUNNING_CPU, so
+// a request landing while the core is between frames (CORE_NEXTFRAME), running a display list or
+// bouncing through the dispatcher used to be dropped with a warning. This one stays pending until
+// the CPU next runs and is applied there. Taking effect (by this or any other break) clears it.
+void Core_RequestBreak(BreakReason reason);
+
+// Break at the start of the Nth vblank from now (N >= 1), after that vblank's flip, so the display
+// shows that frame. 0 cancels. Any other break cancels it too, like a step. CPU thread only.
+void Core_SetBreakAfterVblanks(int count);
+// Called by sceDisplay on every vblank (CPU thread).
+void Core_NotifyVblank();
 
 BreakReason Core_BreakReason();
 
