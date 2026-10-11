@@ -22,6 +22,7 @@
 #include "Core/Debugger/WebSocket/WebSocketUtils.h"
 #include "Core/MIPS/MIPS.h"
 #include "Core/System.h"
+#include "Core/HW/Display.h"
 
 struct CPUSteppingEvent {
 	// By value: the SteppingReason this is built from is a temporary at every call site, and it
@@ -36,6 +37,7 @@ struct CPUSteppingEvent {
 		j.writeUint("pc", currentMIPS->pc);
 		// A double ought to be good enough for a 156 day debug session.
 		j.writeFloat("ticks", CoreTiming::GetTicks(currentMIPS));
+		j.writeInt("vblanks", __DisplayGetVCount());
 		if (reason_.reason != BreakReason::None) {
 			j.writeString("reason", BreakReasonToString(reason_.reason));
 			j.writeUint("relatedAddress", reason_.relatedAddress);
@@ -58,6 +60,7 @@ private:
 // Sent unexpectedly with these properties:
 //  - pc: number value of PC register (inaccurate unless stepping.)
 //  - ticks: number of CPU cycles into emulation.
+//  - vblanks: vblanks since boot, as in cpu.status.
 //  - reason: an optional property, if present, it's equal to the value submitted to Core_EnableStepping ("jit.branchdebug", "savestate.load", "ui.lost_focus", etc.)
 //  - relatedAddress: an optional address (often zero, but it can be a value of PC saved at some point, a related memory address, etc.), always present if 'reason' is present
 

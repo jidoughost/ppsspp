@@ -21,6 +21,7 @@
 #include "Core/Debugger/WebSocket/SteppingSubscriber.h"
 #include "Core/Debugger/WebSocket/WebSocketUtils.h"
 #include "Core/Core.h"
+#include "Core/HW/Display.h"
 #include "Core/CoreTiming.h"
 #include "Core/HLE/HLE.h"
 #include "Core/HLE/sceKernelThread.h"
@@ -39,6 +40,7 @@ struct WebSocketSteppingState : public DebuggerSubscriber {
 	void Out(DebuggerRequest &req);
 	void RunUntil(DebuggerRequest &req);
 	void RunUntilTime(DebuggerRequest &req);
+	void RunFrames(DebuggerRequest &req);
 	void HLE(DebuggerRequest &req);
 
 protected:
@@ -54,6 +56,7 @@ DebuggerSubscriber *WebSocketSteppingInit(DebuggerEventHandlerMap &map) {
 	map["cpu.stepOut"]  = [p](DebuggerRequest &req) { p->Out(req); };
 	map["cpu.runUntil"] = [p](DebuggerRequest &req) { p->RunUntil(req); };
 	map["cpu.runUntilTime"] = [p](DebuggerRequest &req) { p->RunUntilTime(req); };
+	map["cpu.runFrames"] = [p](DebuggerRequest &req) { p->RunFrames(req); };
 	map["cpu.nextHLE"]  = [p](DebuggerRequest &req) { p->HLE(req); };
 	return p;
 }
@@ -330,6 +333,42 @@ void WebSocketSteppingState::RunUntilTime(DebuggerRequest &req) {
 		JsonWriter &json = req.Respond();
 		json.writeFloat("targetUs", (double)targetUs);
 		json.writeFloat("us", (double)nowUs);
+	});
+}
+
+// Run a number of frames, then stop (cpu.runFrames)
+//
+// Frame-exact counterpart to cpu.runUntilTime: stops at the start of the Nth vblank from now, right
+// after that vblank's flip, so the display then shows exactly that frame and a screenshot taken at
+// the stop is the frame the game presented. The same N from the same state lands on the same frame.
+// Works from stepping or running.
+//
+// Parameters:
+//  - frames: number of vblanks to run, at least 1.
+//
+// Response (same event name):
+//  - vblanks: the vblank count now (as in cpu.status).
+//  - targetVblanks: the count it will stop at.
+// A cpu.stepping event (reason "cpu.runFrames", with vblanks) follows once it gets there. Anything
+// else that stops the CPU first - a breakpoint, cpu.stepping - cancels it, as it cancels a step.
+void WebSocketSteppingState::RunFrames(DebuggerRequest &req) {
+	if (!currentDebugMIPS->isAlive()) {
+		return req.Fail("CPU not started");
+	}
+	uint32_t frames = 0;
+	if (!req.ParamU32("frames", &frames))
+		return;
+	if (frames < 1 || frames > 1000000)
+		return req.Fail("frames must be between 1 and 1000000");
+
+	Core_RunOnCPUThread([&] {
+		const int now = __DisplayGetVCount();
+		PrepareResume();
+		Core_SetBreakAfterVblanks((int)frames);
+		Core_Resume();
+		JsonWriter &json = req.Respond();
+		json.writeInt("vblanks", now);
+		json.writeInt("targetVblanks", now + (int)frames);
 	});
 }
 

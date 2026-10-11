@@ -751,6 +751,8 @@ bool PSP_InitStart(const CoreParameter &coreParam) {
 	}
 
 	IncrementDebugCounter(DebugCounter::GAME_BOOT);
+	Core_SetStopReason("");
+	Core_SetBreakAfterVblanks(0);
 
 	g_bootState = BootState::Booting;
 

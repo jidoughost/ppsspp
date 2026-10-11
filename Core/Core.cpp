@@ -321,6 +321,7 @@ const char *BreakReasonToString(BreakReason reason) {
 	case BreakReason::UIPause: return "ui.pause";
 	case BreakReason::HLEDebugBreak: return "hle.step";
 	case BreakReason::RunUntilTime: return "cpu.runUntilTime";
+	case BreakReason::RunFrames: return "cpu.runFrames";
 	default: return "Unknown";
 	}
 }
@@ -350,6 +351,44 @@ void Core_NotifyLifecycle(CoreLifecycle stage) {
 void Core_Stop() {
 	Core_ResetException();
 	Core_UpdateState(CORE_POWERDOWN);
+}
+
+static std::mutex g_stopReasonLock;
+static std::string g_stopReason;
+
+void Core_SetStopReason(const char *reason) {
+	std::lock_guard<std::mutex> guard(g_stopReasonLock);
+	g_stopReason = reason ? reason : "";
+}
+
+std::string Core_GetStopReason() {
+	std::lock_guard<std::mutex> guard(g_stopReasonLock);
+	return g_stopReason;
+}
+
+// See Core_RequestBreak. Holds (int)BreakReason, 0 (BreakReason::None) when nothing is pending.
+static std::atomic<int> g_pendingBreak{ 0 };
+// See Core_SetBreakAfterVblanks. CPU thread only.
+static int g_breakAfterVblanks = 0;
+
+void Core_RequestBreak(BreakReason reason) {
+	g_pendingBreak.store((int)reason);
+	// The common case takes effect right away; if the state moves under us, the run loop applies it.
+	if (coreState == CORE_RUNNING_CPU)
+		Core_Break(reason, 0);
+	Core_WakeIdleCPUThread();
+}
+
+void Core_SetBreakAfterVblanks(int count) {
+	g_breakAfterVblanks = count > 0 ? count : 0;
+}
+
+void Core_NotifyVblank() {
+	if (g_breakAfterVblanks > 0 && --g_breakAfterVblanks == 0) {
+		// The flip that ends the frame has already put the core in CORE_NEXTFRAME, where Core_Break()
+		// can't act; the request is applied as the next frame starts, before any of it has run.
+		Core_RequestBreak(BreakReason::RunFrames);
+	}
 }
 
 void Core_UpdateState(CoreState newState) {
@@ -434,6 +473,12 @@ void Core_RunLoopUntil(u64 globalticks) {
 			break;
 		}
 		case CORE_RUNNING_CPU:
+			if (g_pendingBreak.load()) {
+				// A break requested while we weren't in a state to take it - see Core_RequestBreak.
+				Core_Break((BreakReason)g_pendingBreak.load(), currentMIPS->pc);
+				if (coreState != CORE_RUNNING_CPU)
+					break;
+			}
 			mipsr4k.RunLoopUntil(globalticks);
 			if (coreState == CORE_RUNNING_CPU) {
 				// If we are still running, we must have reached the end of a frame.
@@ -655,7 +700,8 @@ void Core_Break(BreakReason reason, u32 relatedAddress, const BreakpointHit *hit
 	const CoreState state = coreState;
 	if (state != CORE_RUNNING_CPU) {
 		if (state == CORE_STEPPING_CPU) {
-			// Already stepping.
+			// Already stepping, which is what any pending request wanted.
+			g_pendingBreak.store(0);
 			INFO_LOG(Log::CPU, "Core_Break(%s), already in break mode", BreakReasonToString(reason));
 			return;
 		}
@@ -690,6 +736,9 @@ void Core_Break(BreakReason reason, u32 relatedAddress, const BreakpointHit *hit
 
 		// Same reasoning for a cpu.runUntilTime deadline - it belonged to the run that just ended.
 		CoreTiming::SetBreakDeadlineUs(0);
+		// And a cpu.runFrames count, and any break request this one satisfies.
+		g_breakAfterVblanks = 0;
+		g_pendingBreak.store(0);
 
 		g_breakReason = reason;
 		// Cleared rather than left alone when there's no hit, so the detail from an earlier
