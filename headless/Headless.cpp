@@ -55,6 +55,13 @@
 #include "Core/ConfigValues.h"
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
+#include "Core/Debugger/WebSocket.h"
+#include "Core/HW/Display.h"
+#include "Core/MIPS/MIPS.h"
+#include "Common/Data/Format/JSONWriter.h"
+
+using json::JsonWriter;
+#include "Core/CoreTiming.h"
 #include "Core/EmuThread.h"
 #include "Core/HLE/HLE.h"
 #include "Core/HLE/__sceAudio.h"
@@ -416,6 +423,47 @@ static void EndDrawFrame(Draw::DrawContext *draw) {
 	}
 }
 
+// The run is over: say why, on stderr and to any connected debugger (game.exit, category "exit").
+// Everything that ends the loop above leaves a reason - the game exiting, a crash, a timeout - and
+// a state the loop didn't expect to end on is named as such, so no run ends silently.
+static void ReportExit(double startTime, double emulatedElapsed) {
+	const CoreState state = coreState;
+	std::string reason = Core_GetStopReason();
+	std::string detail;
+	if (state == CORE_RUNTIME_ERROR) {
+		const MIPSExceptionInfo &info = Core_GetExceptionInfo();
+		if (reason.empty())
+			reason = "runtime.error";
+		detail = StringFromFormat("%s at %08x addr %08x: %s", ExceptionTypeAsString(info.type), info.pc, info.address, info.info.c_str());
+	}
+	if (reason.empty())
+		reason = state == CORE_POWERDOWN ? "powerdown" : std::string("loop.left:") + CoreStateToString(state);
+	const u32 pc = currentMIPS ? currentMIPS->pc : 0;
+	const int vblanks = __DisplayGetVCount();
+	const double wall = time_now_d() - startTime;
+	fprintf(stderr, "PPSSPPHeadless exit: reason=%s state=%s pc=%08x vblanks=%d emulatedSec=%.2f wallSec=%.2f%s%s\n",
+		reason.c_str(), CoreStateToString(state), pc, vblanks, emulatedElapsed, wall,
+		detail.empty() ? "" : " detail=", detail.c_str());
+	fflush(stderr);
+
+	if (WebSocketDebuggerHasClients()) {
+		JsonWriter j;
+		j.begin();
+		j.writeString("event", "game.exit");
+		j.writeString("reason", reason);
+		j.writeString("state", CoreStateToString(state));
+		j.writeUint("pc", pc);
+		j.writeInt("vblanks", vblanks);
+		j.writeFloat("emulatedSec", emulatedElapsed);
+		j.writeFloat("wallSec", wall);
+		if (!detail.empty())
+			j.writeString("detail", detail);
+		j.end();
+		WebSocketNotifyEvent("exit", j.str());
+		WebSocketFlushEvents(500);
+	}
+}
+
 static bool RunAutoTest(GraphicsContext *graphicsContext, CoreParameter &coreParameter, const AutoTestOptions &opt) {
 	using namespace Draw;
 
@@ -515,7 +563,15 @@ static bool RunAutoTest(GraphicsContext *graphicsContext, CoreParameter &corePar
 	double statsStart = -1.0;
 	int statsLastFlips = 0;
 	coreState = coreParameter.startBreak ? CORE_STEPPING_CPU : CORE_RUNNING_CPU;
-	while (coreState == CORE_RUNNING_CPU || coreState == CORE_STEPPING_CPU) {
+	// With a debugger, the GE states are a pause or a display list in flight, not the end of the run:
+	// leaving here on them used to end a debugged run with exit status 0 and no word as to why.
+	auto keepRunning = [&] {
+		const CoreState s = coreState;
+		if (s == CORE_RUNNING_CPU || s == CORE_STEPPING_CPU)
+			return true;
+		return opt.debugger && (s == CORE_STEPPING_GE || s == CORE_RUNNING_GE || s == CORE_REENTER_DISPATCH);
+	};
+	while (keepRunning()) {
 		// Savestate loads/saves are queued and applied here, same as EmuScreen::render does in the
 		// app. Without this, --state silently did nothing at all.
 		SaveState::Process();
@@ -575,6 +631,7 @@ static bool RunAutoTest(GraphicsContext *graphicsContext, CoreParameter &corePar
 		}
 		// Without a debugger nothing can resume a stop, so it ends the run.
 		if (coreState == CORE_STEPPING_CPU && !opt.debugger) {
+			Core_SetStopReason((std::string("break.noDebugger:") + BreakReasonToString(Core_BreakReason())).c_str());
 			break;
 		}
 		bool debugger = false;
@@ -597,9 +654,12 @@ static bool RunAutoTest(GraphicsContext *graphicsContext, CoreParameter &corePar
 			}
 
 			passed = false;
+			Core_SetStopReason(wallTimedOut ? "timeout.wall" : "timeout.emulated");
 			Core_Stop();
 		}
 	}
+
+	ReportExit(startTime, emulatedElapsed);
 	if (gpu) {
 		gpu->EndHostFrame();
 	}

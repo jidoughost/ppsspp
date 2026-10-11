@@ -280,6 +280,8 @@ public:
 		g_exitCallbackPending = false;
 		// The callback may have already powered down by calling sceKernelExitGame - that's fine,
 		// Core_Stop is idempotent. Either way, the host will see CORE_POWERDOWN and tear the game down.
+		if (Core_GetStopReason().empty())
+			Core_SetStopReason("game.exitCallback");
 		Core_Stop();
 	}
 
