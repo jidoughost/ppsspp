@@ -69,6 +69,7 @@
 #include "Core/Debugger/WebSocket/MemoryInfoSubscriber.h"
 #include "Core/Debugger/WebSocket/MemorySubscriber.h"
 #include "Core/Debugger/WebSocket/ReplaySubscriber.h"
+#include "Core/Debugger/WebSocket/SaveStateSubscriber.h"
 #include "Core/Debugger/WebSocket/SteppingSubscriber.h"
 #include "Core/Debugger/WebSocket/ClientConfigSubscriber.h"
 
@@ -89,6 +90,8 @@ static const std::vector<SubscriberInit> subscribers({
 	&WebSocketMemoryInfoInit,
 	&WebSocketMemoryInit,
 	&WebSocketReplayInit,
+	&WebSocketSaveStateInit,
+	&WebSocketSystemConfigInit,
 	&WebSocketSteppingInit,
 	&WebSocketClientConfigInit,
 });
@@ -143,6 +146,11 @@ struct DebuggerEventSink {
 		out->swap(pending);
 		pending.clear();
 	}
+
+	bool Empty() {
+		std::lock_guard<std::mutex> guard(lock);
+		return pending.empty();
+	}
 };
 
 static std::mutex g_sinkLock;
@@ -190,6 +198,30 @@ void WebSocketNotifyBreakpointHit(const BreakpointHit &hit) {
 		sink->Push("breakpoint", json);
 }
 
+void WebSocketNotifyEvent(const char *category, const std::string &json) {
+	std::lock_guard<std::mutex> guard(g_sinkLock);
+	for (DebuggerEventSink *sink : g_sinks)
+		sink->Push(category, json);
+}
+
+void WebSocketFlushEvents(int timeoutMs) {
+	const double deadline = time_now_d() + timeoutMs / 1000.0;
+	while (time_now_d() < deadline) {
+		bool empty = true;
+		{
+			std::lock_guard<std::mutex> guard(g_sinkLock);
+			for (DebuggerEventSink *sink : g_sinks)
+				empty = empty && sink->Empty();
+		}
+		if (empty) {
+			// Taken from the queue isn't quite sent yet - give the connection's lap a moment.
+			sleep_ms(20, "ws-flush");
+			return;
+		}
+		sleep_ms(2, "ws-flush");
+	}
+}
+
 void WebSocketDebuggerTick() {
 	// Poll unconditionally, even with nothing connected: these track transitions, and skipping them
 	// would let the "previous" state go stale and fire a bogus event at whoever connects next.
@@ -235,7 +267,7 @@ void HandleDebuggerRequest(const http::ServerRequest &request) {
 	// as a side effect of operator[] the first time each category actually broadcasts - which
 	// meant "game" and "stepping" were rejected as unsupported until one happened to fire, even
 	// though they're documented and valid. Keep in sync with the Broadcast calls further down.
-	for (const char *category : { "logger", "input", "game", "stepping", "breakpoint" })
+	for (const char *category : { "logger", "input", "game", "stepping", "breakpoint", "savedata", "exit" })
 		disallowed_config[category] = false;
 
 	LogBroadcaster logger;

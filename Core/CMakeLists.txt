@@ -203,6 +203,8 @@ if(NOT LIBRETRO)
 		Debugger/WebSocket/MemorySubscriber.h
 		Debugger/WebSocket/ReplaySubscriber.cpp
 		Debugger/WebSocket/ReplaySubscriber.h
+		Debugger/WebSocket/SaveStateSubscriber.cpp
+		Debugger/WebSocket/SaveStateSubscriber.h
 		Debugger/WebSocket/SteppingBroadcaster.cpp
 		Debugger/WebSocket/SteppingBroadcaster.h
 		Debugger/WebSocket/SteppingSubscriber.cpp
