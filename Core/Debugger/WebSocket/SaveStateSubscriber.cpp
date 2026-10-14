@@ -18,6 +18,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -76,27 +77,39 @@ static bool RunWhenStateable(DebuggerRequest &req, const std::function<void()> &
 
 // Blocks until a queued SaveState::Save/Load reports back, which happens on the CPU thread the next
 // time it processes save states (every run-loop lap while stepping, about every frame while not).
+// The callback owns the shared state, so a report that arrives after Wait() gave up (and this waiter
+// left the stack) still writes into live memory.
 struct StateWaiter {
-	std::mutex lock;
-	std::condition_variable cond;
-	bool done = false;
+	struct Shared {
+		std::mutex lock;
+		std::condition_variable cond;
+		bool done = false;
+		SaveState::Status status = SaveState::Status::FAILURE;
+		std::string message;
+	};
+	std::shared_ptr<Shared> shared = std::make_shared<Shared>();
 	SaveState::Status status = SaveState::Status::FAILURE;
 	std::string message;
 
 	SaveState::Callback Callback() {
-		return [this](SaveState::Status s, std::string_view msg, std::string_view) {
-			std::lock_guard<std::mutex> guard(lock);
-			status = s;
-			message = msg;
-			done = true;
-			cond.notify_all();
+		std::shared_ptr<Shared> state = shared;
+		return [state](SaveState::Status s, std::string_view msg, std::string_view) {
+			std::lock_guard<std::mutex> guard(state->lock);
+			state->status = s;
+			state->message = msg;
+			state->done = true;
+			state->cond.notify_all();
 		};
 	}
 
 	bool Wait(int seconds) {
-		std::unique_lock<std::mutex> guard(lock);
+		std::unique_lock<std::mutex> guard(shared->lock);
 		Core_WakeIdleCPUThread();
-		return cond.wait_for(guard, std::chrono::seconds(seconds), [this] { return done; });
+		if (!shared->cond.wait_for(guard, std::chrono::seconds(seconds), [this] { return shared->done; }))
+			return false;
+		status = shared->status;
+		message = shared->message;
+		return true;
 	}
 };
 
